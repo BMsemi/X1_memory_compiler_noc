@@ -1,0 +1,1 @@
+from user_proj_tests.x1_memory_compiler_noc.x1_memory_compiler_noc import x1_memory_compiler_noc

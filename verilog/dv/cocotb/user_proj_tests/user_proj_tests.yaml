@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+includes:
+    - x1_memory_compiler_noc/x1_memory_compiler_noc.yaml

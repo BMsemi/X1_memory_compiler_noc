@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: Apache-2.0
+// Gate-level + SDF views are not packaged for this behavioral RTL release.
+// Regenerate GL netlists and SDF before enabling timing simulation.

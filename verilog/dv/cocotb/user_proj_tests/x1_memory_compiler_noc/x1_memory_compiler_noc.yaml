@@ -1,0 +1,2 @@
+Tests:
+    - {name: x1_memory_compiler_noc, sim: RTL}
