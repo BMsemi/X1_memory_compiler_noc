@@ -107,10 +107,7 @@ void main()
     if (fmt_id != 1u || role_id != ROLE_FFN_DOWN || bits_per_value != 9u) ok = 0u;
     if (coarse_bits != 5u || fine_bits != 3u || value_count != 4u) ok = 0u;
     if (tile_group != 0x155u || reduce_mode != 1u || tail_valid != 100u) ok = 0u;
-    if ((payload_lo & 0x1FFu) != 4u) ok = 0u;
-    if (((payload_lo >> 9) & 0x1FFu) != 4u) ok = 0u;
-    if (((payload_lo >> 18) & 0x1FFu) != 0u) ok = 0u;
-    if (((payload_lo >> 27) & 0x1Fu) != 0u) ok = 0u;
+    if (payload_lo != 0u) ok = 0u;
 
     ManagmentGpio_write(ok ? 1 : 0);
     while (1) { }

@@ -343,30 +343,88 @@ module x1_memory_compiler_noc #(
         reg [3:0] msb_idx;
         reg [5:0] coarse_tmp;
         reg [5:0] fine_tmp;
-        reg [8:0] fine_mask;
+        reg [5:0] max_coarse;
+        reg [5:0] mant_shift;
+        reg [10:0] payload_mask;
+        reg [31:0] active_threshold;
+        reg [31:0] mantissa_base;
+        reg [31:0] max_mantissa;
+        reg [31:0] mant_numer;
+        reg [31:0] mantissa_tmp;
+        reg [31:0] remainder_mask;
+        reg [31:0] remainder;
+        reg [31:0] half_lsb;
+        reg        clipped_high;
         begin
             msb_idx = 4'd0;
+            coarse_tmp = 6'd0;
+            fine_tmp = 6'd0;
+            clipped_high = 1'b0;
+
+            max_coarse = (6'd1 << coarse_bits) - 6'd1;
+            mantissa_base = 32'd1 << fine_bits;
+            max_mantissa = (32'd1 << ({3'd0, fine_bits} + 6'd1)) - 32'd1;
+            payload_mask = (11'd1 << (6'd1 + {3'd0, coarse_bits} + {3'd0, fine_bits})) - 11'd1;
+
+            if (gain_shift == 5'd0)
+                active_threshold = 32'd1;
+            else if (gain_shift > 5'd9)
+                active_threshold = 32'd512;
+            else
+                active_threshold = 32'd1 << (gain_shift - 5'd1);
+
             for (bi = 0; bi < 9; bi = bi + 1) begin
                 if (magnitude[bi])
                     msb_idx = bi[3:0];
             end
 
-            if (magnitude == 9'd0) begin
+            if ((magnitude == 9'd0) || ({23'd0, magnitude} < active_threshold)) begin
                 coarse_tmp = 6'd0;
                 fine_tmp = 6'd0;
             end else begin
-                coarse_tmp = {2'd0, msb_idx} + {1'd0, gain_shift};
-                if (coarse_tmp > ((6'd1 << coarse_bits) - 6'd1))
-                    coarse_tmp = (6'd1 << coarse_bits) - 6'd1;
-
-                fine_mask = (9'd1 << fine_bits) - 9'd1;
-                if (msb_idx >= (fine_bits - 1'b1))
-                    fine_tmp = (magnitude >> (msb_idx - (fine_bits - 1'b1))) & fine_mask;
+                if ({2'd0, msb_idx} > {1'd0, gain_shift})
+                    coarse_tmp = {2'd0, msb_idx} - {1'd0, gain_shift};
                 else
-                    fine_tmp = (magnitude << ((fine_bits - 1'b1) - msb_idx)) & fine_mask;
+                    coarse_tmp = 6'd0;
+
+                if (coarse_tmp > max_coarse) begin
+                    coarse_tmp = max_coarse;
+                    clipped_high = 1'b1;
+                end
+
+                mant_shift = {1'd0, gain_shift} + coarse_tmp;
+                mant_numer = {23'd0, magnitude} << fine_bits;
+                if (mant_shift == 6'd0) begin
+                    mantissa_tmp = mant_numer;
+                end else begin
+                    mantissa_tmp = mant_numer >> mant_shift;
+                    remainder_mask = (32'd1 << mant_shift) - 32'd1;
+                    remainder = mant_numer & remainder_mask;
+                    half_lsb = 32'd1 << (mant_shift - 6'd1);
+                    if ((remainder > half_lsb) || ((remainder == half_lsb) && mantissa_tmp[0]))
+                        mantissa_tmp = mantissa_tmp + 32'd1;
+                end
+
+                if (mantissa_tmp < mantissa_base)
+                    mantissa_tmp = mantissa_base;
+
+                if (mantissa_tmp >= (32'd1 << ({3'd0, fine_bits} + 6'd1))) begin
+                    if (coarse_tmp < max_coarse) begin
+                        coarse_tmp = coarse_tmp + 6'd1;
+                        mantissa_tmp = mantissa_base;
+                    end else begin
+                        clipped_high = 1'b1;
+                    end
+                end
+
+                if (mantissa_tmp > max_mantissa)
+                    mantissa_tmp = max_mantissa;
+                if (clipped_high)
+                    mantissa_tmp = max_mantissa;
+                fine_tmp = mantissa_tmp - mantissa_base;
             end
 
-            encode_sar_value = ({1'b0, coarse_tmp[4:0], fine_tmp[4:0]}) & ((11'd1 << (1 + coarse_bits + fine_bits)) - 11'd1);
+            encode_sar_value = ((({6'd0, coarse_tmp[4:0]} << fine_bits) | {6'd0, fine_tmp[4:0]}) & payload_mask);
         end
     endfunction
 
