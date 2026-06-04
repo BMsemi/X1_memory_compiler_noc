@@ -38,7 +38,7 @@ Expected smoke result:
 
 - direct X1 program/readback returns 1
 - NoC flit valid/last assert
-- role 2 SAR/TDC payload values are [4, 4, 0, 0] for the four default X1 macros
+- role 2 SAR/TDC payload values are [0, 0, 0, 0] for the four default X1 macros under FP4LLM SAR-FP packing
 
 ## Scope Notes
 
