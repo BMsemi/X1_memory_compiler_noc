@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+Tests:
+    - {name: x1_real_weight_firmware, sim: RTL, macros: [X1_ANALOG_WEIGHT_BEHAV]}

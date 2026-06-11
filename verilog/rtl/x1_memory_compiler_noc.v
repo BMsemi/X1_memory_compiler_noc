@@ -227,8 +227,8 @@ module x1_memory_compiler_noc #(
     reg [31:0] result_sram_words [0:15];
     reg [7:0] window_program_count;
     reg [7:0] window_program_idx;
-    reg [7:0] dma_word_count;
-    reg [7:0] dma_word_idx;
+    reg [29:0] dma_word_count;
+    reg [29:0] dma_word_idx;
 
     reg [31:0] x1_di;
     reg        x1_we;
@@ -338,10 +338,15 @@ module x1_memory_compiler_noc #(
     wire [7:0] desc_op = desc_words[0][19:12];
     wire [31:0] desc_fetch_word_addr = desc_fetch_addr + {26'd0, desc_fetch_index, 2'b00};
     wire [31:0] desc_program_entries = {2'd0, desc_words[7][31:2]};
-    wire [7:0] desc_transfer_words = (desc_words[7][1:0] == 2'd0) ? desc_words[7][9:2] : (desc_words[7][9:2] + 8'd1);
-    wire desc_transfer_count_ok = (desc_transfer_words != 8'd0) && (desc_transfer_words <= 8'd16);
-    wire [31:0] dma_load_word_addr = desc_words[2] + {22'd0, dma_word_idx, 2'b00};
-    wire [31:0] dma_store_word_addr = desc_words[5] + {22'd0, dma_word_idx, 2'b00};
+    wire [29:0] desc_transfer_words = desc_words[7][31:2] + ((desc_words[7][1:0] == 2'd0) ? 30'd0 : 30'd1);
+    wire desc_transfer_nonzero = (desc_transfer_words != 30'd0);
+    wire desc_transfer_small_window_ok = desc_transfer_nonzero && (desc_transfer_words <= 30'd16);
+    wire desc_transfer_noc_ok = desc_transfer_nonzero && (desc_transfer_words <= 30'd4);
+    wire desc_transfer_dma_load_ok = desc_transfer_nonzero;
+    wire desc_transfer_dma_store_ok = desc_transfer_small_window_ok;
+    wire [31:0] dma_word_byte_offset = {dma_word_idx, 2'b00};
+    wire [31:0] dma_load_word_addr = desc_words[2] + dma_word_byte_offset;
+    wire [31:0] dma_store_word_addr = desc_words[5] + dma_word_byte_offset;
     wire [3:0] dma_load_dst_index = desc_words[5][5:2] + dma_word_idx[3:0];
     wire [3:0] dma_store_src_index = desc_words[2][5:2] + dma_word_idx[3:0];
 
@@ -575,7 +580,7 @@ module x1_memory_compiler_noc #(
                     compute_macro_idx <= 8'd0;
                     state <= S_COMPUTE_PREP;
                 end else if (desc_op == DESC_OP_PROGRAM_X1_WINDOW) begin
-                    if ((desc_program_entries == 32'd0) || (desc_program_entries > 32'd16)) begin
+                    if (!desc_transfer_nonzero) begin
                         desc_busy <= 1'b0;
                         desc_active <= 1'b0;
                         desc_error <= 1'b1;
@@ -583,16 +588,23 @@ module x1_memory_compiler_noc #(
                         desc_result_word <= 32'hBAD0_0004;
                         error_sticky <= 1'b1;
                         state <= S_IDLE;
+                    end else if (!desc_transfer_small_window_ok) begin
+                        desc_busy <= 1'b0;
+                        desc_active <= 1'b0;
+                        desc_done <= 1'b1;
+                        desc_exec_count <= desc_exec_count + 16'd1;
+                        desc_result_word <= {2'd0, desc_transfer_words};
+                        state <= S_IDLE;
                     end else begin
                         result_valid <= 1'b0;
                         desc_busy <= 1'b1;
                         desc_active <= 1'b1;
-                        window_program_count <= {3'd0, desc_words[7][6:2]};
+                        window_program_count <= desc_transfer_words[7:0];
                         window_program_idx <= 8'd0;
                         state <= S_DESC_PROGRAM_PREP;
                     end
                 end else if (desc_op == DESC_OP_DMA_LOAD) begin
-                    if (!desc_transfer_count_ok) begin
+                    if (!desc_transfer_dma_load_ok) begin
                         desc_busy <= 1'b0;
                         desc_active <= 1'b0;
                         desc_error <= 1'b1;
@@ -604,11 +616,11 @@ module x1_memory_compiler_noc #(
                         desc_busy <= 1'b1;
                         desc_active <= 1'b1;
                         dma_word_count <= desc_transfer_words;
-                        dma_word_idx <= 8'd0;
+                        dma_word_idx <= 30'd0;
                         state <= S_DMA_LOAD_REQ;
                     end
                 end else if (desc_op == DESC_OP_NOC_SEND) begin
-                    if ((desc_transfer_words == 8'd0) || (desc_transfer_words > 8'd4)) begin
+                    if (!desc_transfer_noc_ok) begin
                         desc_busy <= 1'b0;
                         desc_active <= 1'b0;
                         desc_error <= 1'b1;
@@ -617,23 +629,23 @@ module x1_memory_compiler_noc #(
                         error_sticky <= 1'b1;
                         state <= S_IDLE;
                     end else begin
-                        if (desc_transfer_words > 8'd0)
+                        if (desc_transfer_words > 30'd0)
                             result_sram_words[desc_words[5][5:2]] <= noc_flit_data[31:0];
-                        if (desc_transfer_words > 8'd1)
+                        if (desc_transfer_words > 30'd1)
                             result_sram_words[desc_words[5][5:2] + 4'd1] <= noc_flit_data[63:32];
-                        if (desc_transfer_words > 8'd2)
+                        if (desc_transfer_words > 30'd2)
                             result_sram_words[desc_words[5][5:2] + 4'd2] <= noc_flit_data[95:64];
-                        if (desc_transfer_words > 8'd3)
+                        if (desc_transfer_words > 30'd3)
                             result_sram_words[desc_words[5][5:2] + 4'd3] <= noc_flit_data[127:96];
                         desc_busy <= 1'b0;
                         desc_active <= 1'b0;
                         desc_done <= 1'b1;
                         desc_exec_count <= desc_exec_count + 16'd1;
-                        desc_result_word <= {16'd0, desc_transfer_words};
+                        desc_result_word <= {2'd0, desc_transfer_words};
                         state <= S_IDLE;
                     end
                 end else if (desc_op == DESC_OP_DMA_STORE) begin
-                    if (!desc_transfer_count_ok) begin
+                    if (!desc_transfer_dma_store_ok) begin
                         desc_busy <= 1'b0;
                         desc_active <= 1'b0;
                         desc_error <= 1'b1;
@@ -645,7 +657,7 @@ module x1_memory_compiler_noc #(
                         desc_busy <= 1'b1;
                         desc_active <= 1'b1;
                         dma_word_count <= desc_transfer_words;
-                        dma_word_idx <= 8'd0;
+                        dma_word_idx <= 30'd0;
                         state <= S_DMA_STORE_REQ;
                     end
                 end else if (
@@ -737,8 +749,8 @@ module x1_memory_compiler_noc #(
             window_index <= 4'd0;
             window_program_count <= 8'd0;
             window_program_idx <= 8'd0;
-            dma_word_count <= 8'd0;
-            dma_word_idx <= 8'd0;
+            dma_word_count <= 30'd0;
+            dma_word_idx <= 30'd0;
             periph_rd_req_valid <= 1'b0;
             periph_rd_req_addr <= 32'd0;
             periph_rd_rsp_ready <= 1'b0;
@@ -877,17 +889,17 @@ module x1_memory_compiler_noc #(
                                 end
                             end
                             CTX_DMA_LOAD_PROGRAM: begin
-                                if ((dma_word_idx + 8'd1) >= dma_word_count) begin
+                                if ((dma_word_idx + 30'd1) >= dma_word_count) begin
                                     result_valid <= 1'b1;
                                     last_x1_result <= 32'd0;
                                     desc_busy <= 1'b0;
                                     desc_done <= 1'b1;
                                     desc_active <= 1'b0;
                                     desc_exec_count <= desc_exec_count + 16'd1;
-                                    desc_result_word <= {16'd0, dma_word_count};
+                                    desc_result_word <= {2'd0, dma_word_count};
                                     state <= S_IDLE;
                                 end else begin
-                                    dma_word_idx <= dma_word_idx + 8'd1;
+                                    dma_word_idx <= dma_word_idx + 30'd1;
                                     state <= S_DMA_LOAD_REQ;
                                 end
                             end
@@ -984,15 +996,15 @@ module x1_memory_compiler_noc #(
                     periph_wr_req_strb <= 4'hF;
                     if (periph_wr_req_valid && periph_wr_req_ready) begin
                         periph_wr_req_valid <= 1'b0;
-                        if ((dma_word_idx + 8'd1) >= dma_word_count) begin
+                        if ((dma_word_idx + 30'd1) >= dma_word_count) begin
                             desc_busy <= 1'b0;
                             desc_active <= 1'b0;
                             desc_done <= 1'b1;
                             desc_exec_count <= desc_exec_count + 16'd1;
-                            desc_result_word <= {16'd0, dma_word_count};
+                            desc_result_word <= {2'd0, dma_word_count};
                             state <= S_IDLE;
                         end else begin
-                            dma_word_idx <= dma_word_idx + 8'd1;
+                            dma_word_idx <= dma_word_idx + 30'd1;
                             state <= S_DMA_STORE_REQ;
                         end
                     end
