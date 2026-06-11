@@ -111,13 +111,13 @@ endmodule
 
 // -----------------------------------------------------------------------------
 // X1 behavioral core (sim only)
-//  - 32x32 1-bit X1 cell array
+//  - 32x32 X1 cell array with binary default and optional analog weights
 //  - first three writes capture RTL timing/threshold config packets
 //  - MODE=00: delayed per-cell reset to 0
 //  - MODE=01: delayed single-cell read, returned through output FIFO
 //  - MODE=10: compute mode; collect three packets, then return a zero-extended
 //              19-bit TDC/scratchpad-style word through the output FIFO
-//  - MODE=11: delayed per-cell set/program using DATA[7:0] threshold
+//  - MODE=11: delayed per-cell program using DATA[7:0]
 //  - WB READ ACKs only when result data is ready
 // -----------------------------------------------------------------------------
 
@@ -184,6 +184,7 @@ module Neuromorphic_X1_beh (
   parameter integer COMPUTE_Dly           = RD_Dly;
   parameter integer WR_Dly                = RTL_PGM_SETUP_CYCLES + ((10'd3 + 10'd1) * RTL_PGM_LOOP_CYCLES) + RD_Dly;
   parameter integer RESET_Dly             = WR_Dly;
+  parameter integer ANALOG_WEIGHT_MODE    = 0;
   parameter [31:0] EMPTY_TOKEN            = 32'hDEAD_C0DE;
 
   // ---------------------------------------------------------------------------
@@ -191,8 +192,9 @@ module Neuromorphic_X1_beh (
   // ---------------------------------------------------------------------------
   integer r, c, k, m;                          // loop indices for init and delays
 
-  // 32x32 memory array (row = [29:25], col = [24:20])
-  reg array_mem [0:31][0:31];  // 32x32 memory array (1-bit values)
+  // 32x32 memory array (row = [29:25], col = [24:20]). In binary mode values
+  // are 0/255; in analog mode they preserve the programmed DATA[7:0] code.
+  reg [7:0] array_mem [0:31][0:31];
 
   // RTL-style configuration registers loaded by the first three Wishbone writes.
   reg [1:0]  config_pkt_count;
@@ -272,11 +274,11 @@ module Neuromorphic_X1_beh (
     integer rr, cc;
     reg [4:0] first_col;
     reg       first_col_seen;
-    reg [8:0] hit_count;
+    reg [18:0] accum;
     begin
       first_col      = 5'd0;
       first_col_seen = 1'b0;
-      hit_count      = 9'd0;
+      accum          = 19'd0;
       for (cc = 0; cc < 32; cc = cc + 1) begin
         if (col_mask[cc]) begin
           if (!first_col_seen) begin
@@ -284,12 +286,16 @@ module Neuromorphic_X1_beh (
             first_col_seen = 1'b1;
           end
           for (rr = 0; rr < 32; rr = rr + 1) begin
-            if (row_mask[rr] && array_mem[rr][cc])
-              hit_count = hit_count + 9'd1;
+            if (row_mask[rr] && (array_mem[rr][cc] != 8'd0)) begin
+              if (ANALOG_WEIGHT_MODE)
+                accum = accum + {11'd0, array_mem[rr][cc]};
+              else
+                accum = accum + 19'd1;
+            end
           end
         end
       end
-      compute_tdc_scratchpad_word = {first_col, 5'd0, hit_count};
+      compute_tdc_scratchpad_word = {first_col, 5'd0, accum[8:0]};
     end
   endfunction
 
@@ -393,10 +399,12 @@ module Neuromorphic_X1_beh (
             compute_col_mask  <= 32'd0;
             compute_full_row  <= 1'b0;
             // Selected-cell set path. The RTL drives one row/col with PWM,
-            // then verifies through the read/TDC path; this 1-bit model stores
-            // the final selected-cell state after the equivalent delay.
+            // then verifies through the read/TDC path. Binary mode keeps the
+            // legacy thresholded final state; analog mode preserves DATA[7:0]
+            // so compiler weight images can drive payload magnitudes.
 					  for (k = 0; k < (RTL_PGM_SETUP_CYCLES + ((no_clk_cycles + 1) * RTL_PGM_LOOP_CYCLES) + RD_Dly); k = k + 1) @(posedge CLKin);
-            array_mem[DI_local[29:25]][DI_local[24:20]] = (DI_local[7:0] > 8'h7F);
+            array_mem[DI_local[29:25]][DI_local[24:20]] = ANALOG_WEIGHT_MODE ? DI_local[7:0] :
+                                                           ((DI_local[7:0] > 8'h7F) ? 8'hFF : 8'h00);
 
             ip_rptr_idx  <= ip_rptr_idx_next;
             ip_rptr_wrap <= ip_rptr_wrap_next;
@@ -413,7 +421,7 @@ module Neuromorphic_X1_beh (
             // This is not RSTin/Wishbone/CPU reset; only row[29:25], col[24:20]
             // is cleared after the program-reset style delay.
 					  for (k = 0; k < (RTL_PGM_SETUP_CYCLES + ((no_clk_cycles + 1) * RTL_PGM_LOOP_CYCLES) + RD_Dly); k = k + 1) @(posedge CLKin);
-            array_mem[DI_local[29:25]][DI_local[24:20]] = 1'b0;
+            array_mem[DI_local[29:25]][DI_local[24:20]] = 8'd0;
 
             ip_rptr_idx  <= ip_rptr_idx_next;
             ip_rptr_wrap <= ip_rptr_wrap_next;
@@ -430,7 +438,7 @@ module Neuromorphic_X1_beh (
               in_process <= 1'b0;
             end else begin
               for (m = 0; m < (RD_Dly + RTL_RDVLD_CYCLES); m = m + 1) @(posedge CLKin);
-              DO_local = {31'b0, array_mem[DI_local[29:25]][DI_local[24:20]]};
+              DO_local = {31'b0, (array_mem[DI_local[29:25]][DI_local[24:20]] != 8'd0)};
               op_fifo[op_wptr_idx] <= DO_local;
               op_wptr_idx  <= op_wptr_idx_next;
               op_wptr_wrap <= op_wptr_wrap_next;
@@ -503,7 +511,7 @@ module Neuromorphic_X1_beh (
   initial begin
     for (r = 0; r < 32; r = r + 1) begin
       for (c = 0; c < 32; c = c + 1) begin
-        array_mem[r][c] = 1'b0;
+        array_mem[r][c] = 8'd0;
       end
     end		
   end
