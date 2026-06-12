@@ -236,6 +236,11 @@ module x1_memory_compiler_noc #(
     wire [NUM_MACROS-1:0] x1_ack_bus;
     wire [NUM_MACROS*32-1:0] x1_do_bus;
     wire [NUM_MACROS-1:0] scan_out_bus;
+    reg [4:0] debug_pe_row;
+    reg [4:0] debug_pe_col;
+    wire [NUM_MACROS*8-1:0] debug_pe_cell_raw_values;
+    wire [NUM_MACROS*8-1:0] debug_pe_cell_effective_values;
+    wire [NUM_MACROS-1:0] debug_pe_cell_programmed;
 
     assign ScanOutCC = |scan_out_bus;
     assign compiler_busy = (state != S_IDLE);
@@ -294,7 +299,12 @@ module x1_memory_compiler_noc #(
                 .Vbias(Vbias),
                 .Vcc_wl_reset(Vcc_wl_reset),
                 .Vcc_set(Vcc_set),
-                .dc_bias(dc_bias)
+                .dc_bias(dc_bias),
+                .debug_read_row(debug_pe_row),
+                .debug_read_col(debug_pe_col),
+                .debug_cell_raw(debug_pe_cell_raw_values[(gi*8) +: 8]),
+                .debug_cell_effective(debug_pe_cell_effective_values[(gi*8) +: 8]),
+                .debug_cell_programmed(debug_pe_cell_programmed[gi])
             );
         end
     endgenerate
@@ -730,6 +740,8 @@ module x1_memory_compiler_noc #(
             x1_di <= 32'd0;
             x1_we <= 1'b1;
             x1_en_mask <= {NUM_MACROS{1'b0}};
+            debug_pe_row <= 5'd0;
+            debug_pe_col <= 5'd0;
             wbs_ack_o <= 1'b0;
             wbs_dat_o <= 32'd0;
             endpoint_noc_flit_data <= 128'd0;

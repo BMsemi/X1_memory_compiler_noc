@@ -44,7 +44,13 @@ module Neuromorphic_X1_wb (
   input         Vbias,           // 1.8 V analog bias
   input         Vcc_wl_reset,    // 2.6 V wordline reset rail
   input         Vcc_set,         // 3.3 V array set rail
-  input         dc_bias
+  input         dc_bias,
+
+  input  [4:0]  debug_read_row,
+  input  [4:0]  debug_read_col,
+  output [7:0]  debug_cell_raw,
+  output [7:0]  debug_cell_effective,
+  output        debug_cell_programmed
 );
 
 	parameter [31:0] ADDR_MATCH = 32'h3000_0004;
@@ -103,7 +109,12 @@ module Neuromorphic_X1_wb (
     .Vbias(Vbias),
     .Vcc_wl_reset(Vcc_wl_reset),
     .Vcc_set(Vcc_set),
-    .dc_bias(dc_bias)
+    .dc_bias(dc_bias),
+    .debug_read_row(debug_read_row),
+    .debug_read_col(debug_read_col),
+    .debug_cell_raw(debug_cell_raw),
+    .debug_cell_effective(debug_cell_effective),
+    .debug_cell_programmed(debug_cell_programmed)
   );
 	
 endmodule
@@ -157,7 +168,13 @@ module Neuromorphic_X1_beh (
   input         Vbias,           // 1.8 V analog bias
   input         Vcc_wl_reset,    // 2.6 V wordline reset rail
   input         Vcc_set,         // 3.3 V set rail
-  input         dc_bias
+  input         dc_bias,
+
+  input  [4:0]  debug_read_row,
+  input  [4:0]  debug_read_col,
+  output [7:0]  debug_cell_raw,
+  output [7:0]  debug_cell_effective,
+  output        debug_cell_programmed
 );
   
   assign ScanOutCC = TM ? ScanInDR : 1'b0;
@@ -195,6 +212,10 @@ module Neuromorphic_X1_beh (
   // 32x32 memory array (row = [29:25], col = [24:20]). In binary mode values
   // are 0/255; in analog mode they preserve the programmed DATA[7:0] code.
   reg [7:0] array_mem [0:31][0:31];
+
+  assign debug_cell_raw = array_mem[debug_read_row][debug_read_col];
+  assign debug_cell_effective = array_mem[debug_read_row][debug_read_col];
+  assign debug_cell_programmed = (array_mem[debug_read_row][debug_read_col] != 8'd0);
 
   // RTL-style configuration registers loaded by the first three Wishbone writes.
   reg [1:0]  config_pkt_count;
