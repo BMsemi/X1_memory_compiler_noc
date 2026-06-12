@@ -510,6 +510,7 @@ module x1_memory_compiler_noc #(
     integer pi;
     reg [127:0] payload_next;
     reg [10:0] code_next;
+    reg [8:0] value_next;
     reg [4:0] bits_next;
     reg [2:0] coarse_next;
     reg [2:0] fine_next;
@@ -518,13 +519,16 @@ module x1_memory_compiler_noc #(
     reg [63:0] header_next;
 
     task build_noc_packet;
+        input [7:0] override_macro;
+        input [8:0] override_value;
         begin
             bits_next = role_bits_per_value(role_reg);
             coarse_next = role_coarse_bits(role_reg);
             fine_next = role_fine_bits(role_reg);
             payload_next = 128'd0;
             for (pi = 0; pi < NUM_MACROS; pi = pi + 1) begin
-                code_next = encode_sar_value(macro_values[pi], coarse_next, fine_next, gain_shift_reg);
+                value_next = (pi[7:0] == override_macro) ? override_value : macro_values[pi];
+                code_next = encode_sar_value(value_next, coarse_next, fine_next, gain_shift_reg);
                 payload_next = payload_next | ({{117{1'b0}}, code_next} << (pi * bits_next));
             end
             payload_bits_next = NUM_MACROS * bits_next;
@@ -1095,7 +1099,7 @@ module x1_memory_compiler_noc #(
                     end else begin
                         macro_values[active_macro] <= active_x1_do[8:0];
                         if (active_macro == (NUM_MACROS - 1)) begin
-                            build_noc_packet();
+                            build_noc_packet(active_macro, active_x1_do[8:0]);
                             result_valid <= 1'b1;
                             if (desc_active) begin
                                 desc_busy <= 1'b0;
